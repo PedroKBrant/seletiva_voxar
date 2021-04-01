@@ -2,7 +2,7 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/calib3d.hpp>
-#include <opencv2/highgui.hpp>      //for imshow
+#include <opencv2/highgui.hpp>
 #include <vector>
 #include <iostream>
 #include <iomanip>
@@ -13,14 +13,11 @@
 using std::cout;
 using std::vector;
 using std::string;
-
 using namespace std;
 using namespace cv;
 
-
 const double kDistanceCoef = 4.0;
 const int kMaxMatchingSize = 50;
-
 
 const double akaze_thresh = 3e-4; // AKAZE detection threshold set to locate about 1000 keypoints
 const double ransac_thresh = 2.5f; // RANSAC inlier threshold
@@ -28,77 +25,22 @@ const double nn_match_ratio = 0.8f; // Nearest-neighbour matching ratio
 const int bb_min_inliers = 100; // Minimal number of inliers to draw bounding box
 const int stats_update_period = 10; // On-screen statistics are updated every 10 frames
 
-
 Ptr<Feature2D> featureDetector(string type) {
-    if (type.find("fast") == 0) {
-        type = type.substr(4);
-        Ptr<FastFeatureDetector> detector = FastFeatureDetector::create(10, true);
-        return detector;
-    }
-    if (type.find("blob") == 0) {
-        type = type.substr(4);
-        Ptr<SimpleBlobDetector> detector = SimpleBlobDetector::create();
-        return detector;
-    }
-    if (type == "orb") {
-        Ptr<ORB> orb = ORB::create();
-        return orb;
-    }
+
     if (type == "brisk") {
         Ptr<BRISK> brisk = BRISK::create();
         return brisk;
-    }
-    if (type == "kaze") {
-        Ptr<KAZE> kaze = KAZE::create();
-        return kaze;
     }
     if (type == "akaze") {
         Ptr<AKAZE> akaze = AKAZE::create();
         akaze->setThreshold(akaze_thresh);
         return akaze;
     }
-}
-
-void match(string type, Mat& desc1, Mat& desc2, vector<DMatch>& matches) {
-    matches.clear();
-    if (type == "bf") {
-        BFMatcher desc_matcher(cv::NORM_HAMMING, true);
-        desc_matcher.match(desc1, desc2, matches, Mat());
-    }
-    if (type == "knn") {
-        BFMatcher desc_matcher(cv::NORM_HAMMING, true);
-        vector< vector<DMatch> > vmatches;
-        desc_matcher.knnMatch(desc1, desc2, vmatches, 1);
-        for (int i = 0; i < static_cast<int>(vmatches.size()); ++i) {
-            if (!vmatches[i].size()) {
-                continue;
-            }
-            matches.push_back(vmatches[i][0]);
-        }
-    }
-    std::sort(matches.begin(), matches.end());
-    while (matches.front().distance * kDistanceCoef < matches.back().distance) {
-        matches.pop_back();
-    }
-    while (matches.size() > kMaxMatchingSize) {
-        matches.pop_back();
+    else{// orb by default
+        Ptr<ORB> orb = ORB::create();
+        return orb;
     }
 }
-
-void findKeyPointsHomography(vector<KeyPoint>& kpts1, vector<KeyPoint>& kpts2,
-    vector<DMatch>& matches, vector<char>& match_mask) {
-    if (static_cast<int>(match_mask.size()) < 3) {
-        return;
-    }
-    vector<cv::Point2f> pts1;
-    vector<cv::Point2f> pts2;
-    for (int i = 0; i < static_cast<int>(matches.size()); ++i) {
-        pts1.push_back(kpts1[matches[i].queryIdx].pt);
-        pts2.push_back(kpts2[matches[i].trainIdx].pt);
-    }
-    findHomography(pts1, pts2, cv::RANSAC, 4, match_mask);
-}
-
 
 namespace example {
     class Tracker
@@ -124,7 +66,7 @@ namespace example {
 
     void Tracker::setFirstFrame(const Mat frame, vector<Point2f> bb, string title, Stats& stats)
     {
-        cv::Point* ptMask = new cv::Point[bb.size()];
+        cv::Point* ptMask = new cv::Point[ bb.size()];
         const Point* ptContain = { &ptMask[0] };
         int iSize = static_cast<int>(bb.size());
         for (size_t i = 0; i < bb.size(); i++) {
@@ -143,7 +85,7 @@ namespace example {
     }
 
     Mat Tracker::process(const Mat frame, Stats& stats)
-    {
+    { 
         TickMeter tm;
         vector<KeyPoint> kp;
         Mat desc;
@@ -206,18 +148,20 @@ namespace example {
 }
 
 const char* keys =
-"{ help h |                  | Print help message. }"
-"{ input1 | kaze             | Path to input image 1. }"
-"{ input2 | knn              | Path to input image 2. }";
+"{@input_path | 0           |input path can be a camera id, like 0,1,2 or a video filename}"
+"{ input1     | orb         | Feature Detector. }"
+"{ input2     | blur        | Gaussian Blur }";
 
 int main(int argc, char** argv){
 
-    cout << "Type: FeatureDetector, Match Algorithm respectively";
-    CommandLineParser parser(argc, argv, "{@input_path |0|input path can be a camera id, like 0,1,2 or a video filename}");
-    parser.printMessage();
+    cout << "Type: FeatureDescriptor, blur ";
+    CommandLineParser parser(argc, argv, keys);
     string input_path = parser.get<string>(0);
-    string video_name = input_path;
+ 
 
+    string desc_type(parser.get<cv::String>("input1"));
+    string blur(parser.get<cv::String>("input2"));
+    string video_name = desc_type + " " + blur;
     VideoCapture video_in;
 
     if ((isdigit(input_path[0]) && input_path.size() == 1))
@@ -235,18 +179,24 @@ int main(int argc, char** argv){
     }
 
     Stats stats, detector_stats;
-    Ptr<Feature2D> detector = featureDetector("orb");
+    Ptr<Feature2D> detector = featureDetector(desc_type);
     Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
     example::Tracker tracker(detector, matcher);
 
-    Mat frame;
+    Mat frame, frame_blurred;
+    String window_name_of_video_blurred_with_5x5_kernel = "Video Blurred with 5 x 5 Gaussian Kernel";
+    //namedWindow(window_name_of_video_blurred_with_5x5_kernel, WINDOW_NORMAL);
     namedWindow(video_name, WINDOW_NORMAL);
     cout << "\nPress any key to stop the video and select a bounding box" << endl;
 
-    while (waitKey(1) < 1)
-    {
+    while (waitKey(1) < 1){
         video_in >> frame;
         cv::resizeWindow(video_name, frame.size());
+        if (blur == "blur") {
+            GaussianBlur(frame, frame_blurred, Size(5, 5), 0);
+            frame = frame_blurred;
+        }
+
         imshow(video_name, frame);
     }
     vector<Point2f> bb;
@@ -256,13 +206,17 @@ int main(int argc, char** argv){
     bb.push_back(cv::Point2f(static_cast<float>(uBox.x + uBox.width), static_cast<float>(uBox.y + uBox.height)));
     bb.push_back(cv::Point2f(static_cast<float>(uBox.x), static_cast<float>(uBox.y + uBox.height)));
 
-    tracker.setFirstFrame(frame, bb, "ORB", stats);
+    tracker.setFirstFrame(frame, bb, desc_type, stats);
     Stats draw_stats;
     Mat res;
     int i = 0;
     for (;;) {
         i++;
         bool update_stats = (i % stats_update_period == 0);
+        if (blur == "blur") {
+            GaussianBlur(frame, frame_blurred, Size(5, 5), 1);
+            frame = frame_blurred;
+        }
         video_in >> frame;
         // stop the program if no more images
         if (frame.empty()) break;
@@ -278,6 +232,6 @@ int main(int argc, char** argv){
         if (waitKey(1) == 27) break; //quit on ESC button
     }
     stats /= i - 1;
-    printStatistics("ORB", stats);
+    printStatistics(desc_type, stats);
     return 0;
 }
